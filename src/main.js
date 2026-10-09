@@ -87,7 +87,7 @@ let playToken = 0; // bumps when a game is reset so stale engine replies are ign
 $("level").value = prefs.level ?? 8;
 $("levelOut").textContent = $("level").value;
 $("level").addEventListener("input", () => { $("levelOut").textContent = $("level").value; });
-$("level").addEventListener("change", () => { prefs.level = $("level").value; savePrefs(); engine.setLevel(Number($("level").value)); });
+$("level").addEventListener("change", () => { prefs.level = $("level").value; savePrefs(); }); // used on the engine's next move
 
 for (const b of $("colorSeg").children) {
   b.setAttribute("aria-pressed", String(b.dataset.color === userColor));
@@ -126,7 +126,7 @@ async function engineMove() {
   renderPlay();
   const level = Number($("level").value);
   const movetime = 250 + level * 60;
-  const res = await engine.analyse(game.fen(), { movetime });
+  const res = await engine.analyse(game.fen(), { movetime, level });
   if (token !== playToken || mode !== "play") return;
   const uci = res.bestmove;
   let move = null;
@@ -155,19 +155,19 @@ function renderPlay() {
   board.interactive = mode === "play" && !thinking && !game.isGameOver() && game.turn() === userColor;
 }
 
-async function newGame(fen = START_FEN) {
+async function newGame(fen = START_FEN, { keepOrientation = false } = {}) {
   playToken++;
   await engine.stop();
   thinking = false;
   game = new Chess(fen);
   hideHint();
   $("playEval").textContent = "";
-  board.setOrientation(userColor);
+  if (!keepOrientation) board.setOrientation(userColor);
+  board.cancelAnimations();
   board.setPosition(positionFromChess(game));
   board.setLastMove(null);
   markCheck(game);
   await engine.newGame();
-  await engine.setLevel(Number($("level").value));
   renderPlay();
   if (game.turn() !== userColor && !game.isGameOver()) engineMove();
 }
@@ -496,6 +496,7 @@ function replayStop() { replaying = false; clearTimeout(replayTimer); if (soluti
 function replayJump(n) {
   replayGen++;
   replayStop();
+  board.cancelAnimations();
   ply = n;
   const c = positionAtPly(n);
   board.setPosition(positionFromChess(c));
@@ -540,11 +541,16 @@ $("rPrev").addEventListener("click", () => { if (ply > 0 && !stepping) replayJum
 $("rReset").addEventListener("click", () => replayJump(0));
 
 $("editPos").addEventListener("click", () => enterSetup());
-$("playFromHere").addEventListener("click", () => {
+// Take over the puzzle yourself: you keep the side the puzzle is for (the side that moved
+// first) and the board keeps facing the way it was. If it's the defender's turn at this
+// point, Stockfish plays that move first.
+$("playFromHere").addEventListener("click", async () => {
+  replayStop();
+  while (stepping) await new Promise(r => setTimeout(r, 30)); // let a gliding piece land first
   const fen = positionAtPly(ply).fen();
-  userColor = new Chess(fen).turn();
+  userColor = solution.startTurn;
   for (const x of $("colorSeg").children) x.setAttribute("aria-pressed", String(x.dataset.color === userColor));
-  setMode("play", fen);
+  setMode("play", fen, { keepOrientation: true });
 });
 
 function enterSetup() {
@@ -562,7 +568,7 @@ function enterSetup() {
 // =====================================================================
 // MODE SWITCHING + KEYS
 // =====================================================================
-function setMode(m, fen) {
+function setMode(m, fen, gameOptions) {
   mode = m;
   for (const t of document.querySelectorAll(".mode")) t.setAttribute("aria-selected", String(t.dataset.mode === m));
   $("panel-play").hidden = m !== "play";
@@ -571,7 +577,7 @@ function setMode(m, fen) {
     replayGen++; replayStop();
     $("replay").hidden = true;
     board.editMode = false;
-    newGame(fen);
+    newGame(fen, gameOptions);
   } else {
     playToken++;
     engine.stop();

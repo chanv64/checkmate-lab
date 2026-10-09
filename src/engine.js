@@ -13,6 +13,7 @@ export class Engine {
     };
     this.queue = Promise.resolve();
     this.current = null;
+    this.level = 20;
     this.ready = this.#init();
   }
 
@@ -38,9 +39,11 @@ export class Engine {
     await ok;
   }
 
-  /** Strength: level 0–20 (Stockfish "Skill Level"); 20 is full strength. */
+  /** Strength: level 0–20 (Stockfish "Skill Level"); 20 is full strength. Only call between searches. */
   async setLevel(level) {
     await this.ready;
+    if (level === this.level) return;
+    this.level = level;
     this.#send(`setoption name Skill Level value ${level}`);
     await this.isReady();
   }
@@ -57,14 +60,16 @@ export class Engine {
   }
 
   /**
-   * Search a position. Options: { movetime } in ms or { depth }.
+   * Search a position. Options: { movetime } in ms or { depth }, and { level } 0–20
+   * (default 20, full strength; lower levels deliberately choose weaker moves).
    * onInfo receives live progress { depth, score, pv } while it thinks.
    * Resolves to { bestmove, pv: [uci...], score: { type: "cp"|"mate", value }, depth }.
    * Scores are from the side to move's point of view.
    */
-  analyse(fen, { movetime, depth } = {}, onInfo) {
+  analyse(fen, { movetime, depth, level = 20 } = {}, onInfo) {
     const run = async () => {
       await this.ready;
+      await this.setLevel(level);
       let last = { depth: 0, score: null, pv: [] };
       const infoFn = line => {
         if (!line.startsWith("info") || !line.includes(" pv ")) return;

@@ -22,6 +22,7 @@ export class Board {
     this.selected = null;
     this.interactive = false;
     this.editMode = false;
+    this.animToken = 0;
     this.el.classList.add("board");
     this.overlay = document.createElement("div");
     this.overlay.className = "promo-overlay";
@@ -87,11 +88,17 @@ export class Board {
     return el;
   }
 
+  /** Stop any glide in progress from touching the board when it finishes. */
+  cancelAnimations() { this.animToken++; }
+
   /** Make the board show exactly this position, with no animation. pos: { e4: "wp", ... } */
   setPosition(pos) {
     for (const [sq, el] of this.pieces) {
       if (pos[sq] !== el.dataset.code) { el.remove(); this.pieces.delete(sq); }
     }
+    // pieces still mid-glide (or fading out) aren't in the map: clear them away
+    const live = new Set(this.pieces.values());
+    for (const el of this.el.querySelectorAll(".piece")) if (!live.has(el)) el.remove();
     for (const [sq, code] of Object.entries(pos)) {
       if (!this.pieces.has(sq)) this.pieces.set(sq, this.#makePiece(code, sq));
     }
@@ -106,6 +113,7 @@ export class Board {
     return new Promise(resolve => {
       this.clearSelection();
       this.el.style.setProperty("--move-ms", `${duration}ms`);
+      const token = this.animToken;
       const mover = this.pieces.get(move.from);
       if (!mover) { this.setPosition(finalPos); resolve(); return; }
       const victimSq = move.flags.includes("e") ? move.to[0] + move.from[1] : move.to;
@@ -127,6 +135,7 @@ export class Board {
         setTimeout(() => victim.classList.add("captured"), duration * 0.7);
       }
       setTimeout(() => {
+        if (token !== this.animToken) { resolve(); return; } // superseded by a jump or a new game
         if (victim && victim !== mover) victim.remove();
         mover.classList.remove("moving");
         this.pieces.set(move.to, mover);
