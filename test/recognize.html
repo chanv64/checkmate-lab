@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Recognition tests · Checkmate Lab</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; background: #fff; color: #17212b; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #d5dde6; padding: 6px 10px; text-align: left; vertical-align: top; }
+    code { font: 12px ui-monospace, monospace; }
+    .pass { color: #2e7d4f; font-weight: 700; } .fail { color: #b3261e; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Screenshot recognition tests</h1>
+  <p>Reads every image listed in <code>test/fixtures/expected.json</code> and compares it with the expected position. Add your own screenshots there to grow the test set. Run with <code>npm run dev</code>, then open <code>/test/recognize.html</code>.</p>
+  <table><thead><tr><th>Image</th><th>Result</th><th>Read as</th><th>Problems</th></tr></thead><tbody id="rows"></tbody></table>
+  <script type="module">
+    import { recognize } from "/src/recognize.js";
+    const toFen = pos => { const rows = []; for (let r = 8; r >= 1; r--) { let row = "", e = 0; for (const f of "abcdefgh") { const p = pos[f + r]; if (!p) { e++; continue; } if (e) { row += e; e = 0; } row += p[0] === "w" ? p[1].toUpperCase() : p[1]; } rows.push(row + (e || "")); } return rows.join("/"); };
+    const expand = fen => fen.split("/").map(r => r.replace(/\d/g, d => ".".repeat(+d))).join("/");
+    const expected = await (await fetch("/test/fixtures/expected.json")).json();
+    for (const [file, want] of Object.entries(expected)) {
+      const tr = document.createElement("tr");
+      const bm = await createImageBitmap(await (await fetch(`/test/fixtures/${file}`)).blob());
+      const t0 = performance.now();
+      const r = await recognize(bm);
+      const ms = Math.round(performance.now() - t0);
+      const got = r ? toFen(r.position) : "(no board found)";
+      const problems = [];
+      if (r) {
+        const a = expand(got), b = expand(want.fen);
+        for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) problems.push(`${"abcdefgh"[i % 9]}${8 - Math.floor(i / 9)}: read ${a[i]}, expected ${b[i]}`);
+        if (want.turn && r.turn !== want.turn) problems.push(`to move: read ${r.turn}, expected ${want.turn}`);
+      } else problems.push("board not found");
+      tr.innerHTML = `<td>${file}<br><small>${ms} ms</small></td><td class="${problems.length ? "fail" : "pass"}">${problems.length ? "FAIL" : "PASS"}</td><td><code>${got} ${r?.turn ?? ""}</code></td><td>${problems.join("<br>") || "—"}</td>`;
+      document.getElementById("rows").appendChild(tr);
+    }
+  </script>
+</body>
+</html>

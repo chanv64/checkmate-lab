@@ -1,0 +1,8 @@
+node_modules/
+dist/
+public/engine/
+.claude/
+# Puzzle screenshots stay local (test/recognize.html reads them when present)
+test/fixtures/*.jpg
+test/fixtures/*.png
+.DS_Store

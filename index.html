@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkmate Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Crect width='8' height='8' fill='%236f9cc2'/%3E%3Cpath d='M0 0h4v4H0zM4 4h4v4H4z' fill='%23a9cbe6'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <h1>Checkmate Lab</h1>
+        <span class="engine-status" id="engineStatus">Loading Stockfish…</span>
+      </div>
+      <nav class="modes" role="tablist" aria-label="Mode">
+        <button class="mode" role="tab" id="tab-play" aria-selected="true" data-mode="play">Play</button>
+        <button class="mode" role="tab" id="tab-puzzle" aria-selected="false" data-mode="puzzle">Puzzle</button>
+      </nav>
+      <div class="globals">
+        <label class="speed" for="speed">
+          <span>Move speed</span>
+          <input id="speed" type="range" min="0" max="100" value="55">
+          <output id="speedOut">0.6 s</output>
+        </label>
+        <select id="theme" aria-label="Board colours">
+          <option value="blue">Blue board</option>
+          <option value="wood">Wood board</option>
+        </select>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="board-col">
+        <div class="board-frame"><div id="board"></div></div>
+        <div class="board-bar">
+          <button id="flip" type="button" title="Turn the board around">⇅ Flip</button>
+          <!-- Puzzle replay controls -->
+          <div class="replay" id="replay" hidden>
+            <button id="rReset" type="button" title="Back to the start position">⏮</button>
+            <button id="rPrev" type="button" title="Previous move">◀</button>
+            <button id="rPlay" type="button" class="primary">▶ Play</button>
+            <button id="rNext" type="button" title="Next move">▶</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PLAY MODE -->
+      <aside class="panel" id="panel-play">
+        <div class="status" id="playStatus">Your move.</div>
+        <div class="field-row">
+          <div class="field">
+            <span class="label">You play</span>
+            <div class="seg" id="colorSeg">
+              <button type="button" data-color="w" aria-pressed="true">White</button>
+              <button type="button" data-color="b" aria-pressed="false">Black</button>
+            </div>
+          </div>
+          <label class="field" for="level">
+            <span class="label">Engine level <output id="levelOut">8</output>/20</span>
+            <input id="level" type="range" min="0" max="20" value="8">
+          </label>
+        </div>
+        <div class="btn-row">
+          <button id="newGame" type="button" class="primary">New game</button>
+          <button id="undo" type="button">Take back</button>
+          <button id="hint" type="button">Hint</button>
+        </div>
+        <div class="eval" id="playEval"></div>
+        <ol class="moves" id="playMoves"></ol>
+      </aside>
+
+      <!-- PUZZLE MODE -->
+      <aside class="panel" id="panel-puzzle" hidden>
+        <!-- Setup -->
+        <div id="setup">
+          <p class="hint-text">Set up the position, choose who moves first, then press <b>Solve</b>. Pick a piece below and click squares to place it. Click a square again to remove it.</p>
+          <div class="palette" id="palette" role="toolbar" aria-label="Pieces"></div>
+          <div class="btn-row">
+            <button id="clearBoard" type="button">Clear board</button>
+            <button id="startPos" type="button">Starting position</button>
+          </div>
+          <div class="field">
+            <span class="label">To move</span>
+            <div class="seg" id="turnSeg">
+              <button type="button" data-turn="w" aria-pressed="true">White</button>
+              <button type="button" data-turn="b" aria-pressed="false">Black</button>
+            </div>
+          </div>
+          <label class="field" for="fen">
+            <span class="label">FEN (paste one to load it)</span>
+            <input id="fen" type="text" spellcheck="false" autocomplete="off">
+          </label>
+          <div class="field">
+            <span class="label">Read a puzzle screenshot</span>
+            <label class="drop" id="drop" for="shot">
+              <input id="shot" type="file" accept="image/*">
+              <span id="dropText">Drop, paste or choose a screenshot of the puzzle. The pieces are read on this device; the image is never uploaded.</span>
+              <canvas id="shotCanvas" hidden></canvas>
+            </label>
+            <div class="recog" id="recog" hidden>
+              <p id="recogStatus"></p>
+              <div class="btn-row">
+                <button id="turnAround" type="button" title="Use this if White and Black ended up on the wrong sides">Turn position around</button>
+                <button id="forget" type="button" class="link"></button>
+              </div>
+            </div>
+          </div>
+          <div class="field-row solve-row">
+            <label class="field" for="thinkTime">
+              <span class="label">Think time</span>
+              <select id="thinkTime">
+                <option value="2000">2 seconds</option>
+                <option value="5000" selected>5 seconds</option>
+                <option value="10000">10 seconds</option>
+                <option value="20000">20 seconds</option>
+              </select>
+            </label>
+            <button id="solve" type="button" class="primary big">Solve</button>
+          </div>
+          <div class="error" id="setupError" role="alert"></div>
+        </div>
+        <!-- Solution -->
+        <div id="solution" hidden>
+          <div class="status" id="solveStatus"></div>
+          <div class="note" id="solveNote" aria-live="polite"></div>
+          <ol class="moves" id="solveMoves"></ol>
+          <div class="btn-row">
+            <button id="editPos" type="button">Edit position</button>
+            <button id="playFromHere" type="button">Play from here</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+    <footer class="foot">Engine: Stockfish 19 (lite) via stockfish.js, running in your browser. GPL-3.0.</footer>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
