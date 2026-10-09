@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Train references · Checkmate Lab</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; background: #fff; color: #17212b; max-width: 900px; }
+    textarea { width: 100%; height: 220px; font: 11px ui-monospace, monospace; }
+    code { font: 12px ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>Train built-in piece references</h1>
+  <p>Reads every screenshot listed in <code>test/fixtures/expected.json</code>, labels each piece with the expected position, and turns the outlines into reference shapes. Press <b>Save</b> to write them to <code>src/trained-templates.json</code> (works while <code>npm run dev</code> is running), then re-run <code>/test/recognize.html</code>. Re-train whenever the outline extraction in <code>src/recognize.js</code> changes.</p>
+  <p id="status">Working…</p>
+  <p><button id="save" type="button" disabled>Save</button> <span id="saved"></span></p>
+  <textarea id="out" readonly></textarea>
+  <script type="module">
+    import { recognize } from "/src/recognize.js";
+    const PER_TYPE = 3; // per piece type, per screenshot
+    const expandFen = fen => { const pos = {}; fen.split("/").forEach((row, i) => { let f = 0; for (const ch of row) { if (/\d/.test(ch)) { f += +ch; continue; } pos["abcdefgh"[f] + (8 - i)] = ch.toLowerCase(); f++; } }); return pos; };
+    // 400 cells -> 100 hex digits
+    const bits = g => { let h = ""; for (let i = 0; i < g.length; i += 4) h += ((g[i] ? 8 : 0) | (g[i + 1] ? 4 : 0) | (g[i + 2] ? 2 : 0) | (g[i + 3] ? 1 : 0)).toString(16); return h; };
+    const expected = await (await fetch("/test/fixtures/expected.json")).json();
+    const out = [];
+    const notes = [];
+    for (const [file, want] of Object.entries(expected)) {
+      let bm;
+      try { bm = await createImageBitmap(await (await fetch(`/test/fixtures/${file}`)).blob()); }
+      catch { notes.push(`${file}: missing, skipped`); continue; }
+      const r = await recognize(bm, { trained: false });
+      if (!r) { notes.push(`${file}: no board found`); continue; }
+      const truth = expandFen(want.fen);
+      const count = {};
+      // prefer the pieces the recogniser found hardest (smallest margin) as references
+      const pieces = [...r.pieces].sort((a, b) => (a.ranked[1].d - a.ranked[0].d) - (b.ranked[1].d - b.ranked[0].d));
+      for (const p of pieces) {
+        const t = truth[p.square];
+        if (!t) continue;
+        count[t] = (count[t] || 0) + 1;
+        if (count[t] > PER_TYPE) continue;
+        out.push({ t, a: +p.norm.aspect.toFixed(3), h: +p.norm.h.toFixed(3), g: bits(p.norm.grid), sg: bits(p.norm.sym.grid), sa: +p.norm.sym.aspect.toFixed(3) });
+      }
+      notes.push(`${file}: ${Object.entries(count).map(([t, n]) => `${t}×${Math.min(n, PER_TYPE)}`).join(" ")}`);
+    }
+    document.getElementById("out").value = JSON.stringify(out);
+    document.getElementById("status").textContent = `${out.length} references. ${notes.join(" · ")}`;
+    window.__trained = out;
+    const save = document.getElementById("save");
+    save.disabled = false;
+    save.onclick = async () => {
+      const r = await fetch("/__save-trained", { method: "POST", body: JSON.stringify(out) });
+      document.getElementById("saved").textContent = await r.text();
+    };
+  </script>
+</body>
+</html>

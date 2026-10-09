@@ -39,12 +39,15 @@ npm run build      # static site in dist/ — upload anywhere
 | `src/board.js` | Board drawing, piece animation, drag/click input, promotion picker |
 | `src/main.js` | Play mode, puzzle editor, solver and replay |
 | `src/recognize.js` | Screenshot → position: grid detection, piece outlines, colour, type, orientation, side to move, learning |
+| `src/trained-templates.json` | Built-in reference outlines learned from labelled screenshots (covers e.g. Chess.com's default pieces) |
+| `test/train.html` | Rebuilds `src/trained-templates.json` from the screenshots in `test/fixtures/` (press **Save**; dev server only) |
 | `src/pieces.js` | SVG piece artwork |
 | `test/recognize.html` | Recognition test page (open `/test/recognize.html` while `npm run dev` runs). It reads the screenshots listed in `test/fixtures/expected.json`; the images themselves aren't committed, so drop your own into `test/fixtures/`. |
 | `src/style.css` | Styles, light/dark, blue and wood board themes |
 
 ## Notes
 
+- **Teaching it a new piece style:** put the screenshot in `test/fixtures/`, add its correct FEN and side to move to `test/fixtures/expected.json`, open `/test/train.html` and press **Save**, then check `/test/recognize.html`. Each screenshot contributes up to 3 outlines per piece type; screenshots themselves stay out of git.
 - Recognition works best on flat 2D boards (Lichess, Chess.com and similar). It copes with arrows, highlighted squares, coordinate labels and flipped boards; unusual 3D piece styles may need a correction or two, which it then learns. Crop the screenshot around the board if it's a full-screen capture with lots of other UI.
 - To use the stronger (but ≈100 MB) full engine, change the file names in `scripts/copy-engine.mjs` and `src/engine.js` to `stockfish-19-single.*`.
 - Stockfish is GPL-3.0, so this app is GPL-3.0 too: if you publish it, publish its source as well.

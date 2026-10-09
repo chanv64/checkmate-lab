@@ -9,6 +9,8 @@
 //    (our own piece set, system chess glyphs, and anything learned from your corrections).
 // 4. Guess orientation (which side sits at the bottom) and who is to move.
 import { svgFor } from "./pieces.js";
+// Reference outlines learned from labelled screenshots (test/train.html), e.g. Chess.com's set.
+import trainedRaw from "./trained-templates.json";
 
 const CELL = 64;          // squares are resampled to CELL×CELL pixels
 const GRID = 20;          // silhouettes are compared on a GRID×GRID raster
@@ -109,25 +111,68 @@ function refine(V, { x0, s }) {
 }
 
 // ---------------------------------------------------------------- 2. one square
-function extractSquare(px) {
-  const N = CELL * CELL;
-  const rgb = i => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]];
-  // background: per-channel median of the four corner patches
+function squareBackground(px) {
+  // Background: the most common colour in a ring just inside the square's edge.
+  // Corners alone get fooled when labels, badges or arrows sit in them.
+  const ring = [];
+  for (let y = 1; y < CELL - 1; y++) for (let x = 1; x < CELL - 1; x++) {
+    if (x > 4 && x < CELL - 5 && y > 4 && y < CELL - 5) continue;
+    ring.push(y * CELL + x);
+  }
+  const bins = new Map();
+  for (const i of ring) {
+    const key = (px[i * 4] >> 4) << 8 | (px[i * 4 + 1] >> 4) << 4 | (px[i * 4 + 2] >> 4);
+    bins.set(key, (bins.get(key) || 0) + 1);
+  }
+  // merge each bin with its neighbours so a colour split across a bin edge still wins
+  let bestKey = 0, bestN = -1;
+  for (const key of bins.keys()) {
+    const r = key >> 8, g = (key >> 4) & 15, b = key & 15;
+    let n = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dg = -1; dg <= 1; dg++) for (let db = -1; db <= 1; db++)
+      n += bins.get((r + dr) << 8 | (g + dg) << 4 | (b + db)) || 0;
+    if (n > bestN) { bestN = n; bestKey = key; }
+  }
   const samples = [[], [], []];
-  for (const [ox, oy] of [[2, 2], [CELL - 10, 2], [2, CELL - 10], [CELL - 10, CELL - 10]]) {
-    for (let y = oy; y < oy + 8; y++) for (let x = ox; x < ox + 8; x++) {
-      const i = y * CELL + x; for (let k = 0; k < 3; k++) samples[k].push(px[i * 4 + k]);
-    }
+  for (const i of ring) {
+    const r = px[i * 4] >> 4, g = px[i * 4 + 1] >> 4, b = px[i * 4 + 2] >> 4;
+    if (Math.abs(r - (bestKey >> 8)) <= 1 && Math.abs(g - ((bestKey >> 4) & 15)) <= 1 && Math.abs(b - (bestKey & 15)) <= 1)
+      for (let k = 0; k < 3; k++) samples[k].push(px[i * 4 + k]);
   }
   const bg = samples.map(median);
-  const spread = median(samples[0].map((v, i) => dist3([v, samples[1][i], samples[2][i]], bg)));
-  const T = Math.max(38, spread * 3.2);
+  // texture allowance: how far typical edge pixels sit from the background colour
+  const spread = median(ring.map(i => dist3([px[i * 4], px[i * 4 + 1], px[i * 4 + 2]], bg)));
+  return { bg, spread };
+}
+
+/**
+ * px: CELL×CELL RGBA pixels. squareColour (optional): the board's usual colour for this
+ * square's parity, so highlights and "check" glows can't pass for the background.
+ */
+function extractSquare(px, squareColour) {
+  const N = CELL * CELL;
+  const rgb = i => [px[i * 4], px[i * 4 + 1], px[i * 4 + 2]];
+  let { bg, spread } = squareBackground(px);
+  const T = Math.min(80, Math.max(38, spread * 3.2));
+  // If the board's normal colour for this square still shows around the edge (e.g. a red
+  // "check" glow fading out toward the corners), trust it over the edge's most common
+  // colour, which can be a greyish blend that thin outlines blur into.
+  if (squareColour) {
+    let near = 0, total = 0;
+    for (let y = 1; y < CELL - 1; y++) for (let x = 1; x < CELL - 1; x++) {
+      if (x > 4 && x < CELL - 5 && y > 4 && y < CELL - 5) continue;
+      total++;
+      if (dist3(rgb(y * CELL + x), squareColour) < T) near++;
+    }
+    if (near / total > 0.2) bg = squareColour;
+  }
+  const isBg = c => dist3(c, bg) < T || (squareColour && dist3(c, squareColour) < T);
   const passable = new Uint8Array(N);
   for (let i = 0; i < N; i++) {
     const c = rgb(i);
     const mx = Math.max(...c), mn = Math.min(...c);
     const sat = mx > 40 ? (mx - mn) / mx : 0;
-    passable[i] = dist3(c, bg) < T || sat > 0.5 ? 1 : 0;
+    passable[i] = isBg(c) || sat > 0.5 ? 1 : 0;
   }
   // flood the background in from the edges
   const seen = new Uint8Array(N), stack = [];
@@ -166,7 +211,7 @@ function extractSquare(px) {
     const x = i % CELL, y = (i / CELL) | 0;
     if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
     const c = rgb(i);
-    if (dist3(c, bg) < T) continue;
+    if (isBg(c)) continue;
     const mx = Math.max(...c), mn = Math.min(...c);
     if (mx > 40 && (mx - mn) / mx > 0.3) continue;   // coloured glow or arrow, not white/black paint
     const l = lum(...c);
@@ -267,12 +312,14 @@ async function buildTemplates() {
 }
 function mirror(g) { const m = new Float32Array(g.length); for (let y = 0; y < GRID; y++) for (let x = 0; x < GRID; x++) m[y * GRID + x] = g[y * GRID + GRID - 1 - x]; return m; }
 
+// Outlines are stored as "0101…" strings (learned) or hex, 4 cells per digit (trained).
+const bits = str => str.length === GRID * GRID ? Float32Array.from(str, ch => Number(ch))
+  : Float32Array.from({ length: GRID * GRID }, (_, i) => (parseInt(str[i >> 2], 16) >> (3 - (i & 3))) & 1);
+const fromStored = (s, extra) => ({ t: s.t, aspect: s.a, h: s.h, grid: bits(s.g), sym: s.sg ? { grid: bits(s.sg), aspect: s.sa } : null, ...extra });
+const trained = trainedRaw.map(s => fromStored(s, { trained: true }));
 function loadLearned() {
-  try {
-    const bits = str => Float32Array.from(str, ch => Number(ch));
-    return (JSON.parse(localStorage.getItem(LEARN_KEY) || "[]")).map(s => ({ t: s.t, aspect: s.a, h: s.h, learned: true,
-      grid: bits(s.g), sym: s.sg ? { grid: bits(s.sg), aspect: s.sa } : null }));
-  } catch { return []; }
+  try { return (JSON.parse(localStorage.getItem(LEARN_KEY) || "[]")).map(s => fromStored(s, { learned: true })); }
+  catch { return []; }
 }
 /** Remember confirmed pieces so the next screenshot in the same style reads better. */
 export function learn(samples) {
@@ -307,11 +354,12 @@ function rank(f, templates) {
 // ---------------------------------------------------------------- 4. whole board
 /**
  * @param {HTMLImageElement|ImageBitmap} image
+ * @param {{ trained?: boolean }} [options] trained: false ignores the built-in trained outlines (used by test/train.html)
  * @returns {Promise<null | { position, flipped, turn, turnReason, grid, squares, pieces }>}
  */
-export async function recognize(image) {
+export async function recognize(image, { trained: useTrained = true } = {}) {
   templatesPromise ||= buildTemplates();
-  const templates = [...(await templatesPromise), ...loadLearned()];
+  const templates = [...(await templatesPromise), ...(useTrained ? trained : []), ...loadLearned()];
   const W = image.naturalWidth || image.width, H = image.naturalHeight || image.height;
   const scale = Math.min(1, 900 / Math.max(W, H));
   const sw = Math.round(W * scale), sh = Math.round(H * scale);
@@ -324,16 +372,37 @@ export async function recognize(image) {
   // read every square
   const cell = canvas(CELL, CELL).getContext("2d", { willReadFrequently: true });
   cell.imageSmoothingQuality = "high";
-  const squares = [];
+  const crops = [];
   for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
     const inset = 0.015;
     cell.clearRect(0, 0, CELL, CELL);
     cell.drawImage(image, grid.x + (c + inset) * grid.sx, grid.y + (r + inset) * grid.sy,
       grid.sx * (1 - 2 * inset), grid.sy * (1 - 2 * inset), 0, 0, CELL, CELL);
     const px = cell.getImageData(0, 0, CELL, CELL).data;
-    squares.push({ r, c, red: redShare(px), ...extractSquare(px) });
+    crops.push({ r, c, px, bg: squareBackground(px).bg });
   }
-  const pieces = squares.filter(s => s.piece);
+  // the board's two square colours (median per parity)
+  const parity = [0, 1].map(par => [0, 1, 2].map(k => median(crops.filter(q => (q.r + q.c) % 2 === par).map(q => q.bg[k]))));
+  const squares = crops.map(({ r, c, px }) => ({ r, c, red: redShare(px), ...extractSquare(px, parity[(r + c) % 2]) }));
+  let pieces = squares.filter(s => s.piece);
+  // type: heights relative to the tallest piece (normally a king). A blob that resembles
+  // no piece at all is debris (frame edge, label, badge): drop it, then classify again
+  // so it can't skew the height scale.
+  const classify = () => {
+    const maxH = Math.max(...pieces.map(p => p.h));
+    for (const p of pieces) {
+      p.norm = { grid: p.grid, aspect: p.aspect, h: p.h / maxH, sym: p.sym };
+      p.ranked = rank(p.norm, templates);
+      p.type = p.ranked[0].t;
+    }
+  };
+  if (pieces.length) classify();
+  const debris = pieces.filter(p => p.ranked[0].d > 0.8);
+  if (debris.length) {
+    for (const p of debris) p.piece = false;
+    pieces = pieces.filter(p => p.piece);
+    if (pieces.length) classify();
+  }
   if (!pieces.length) return { position: {}, flipped: false, turn: "w", turnReason: "", grid, squares, pieces };
 
   // colour: split the pieces' brightness into two groups (2-means), falling back to mid-grey
@@ -346,14 +415,7 @@ export async function recognize(image) {
       hi = b.reduce((s, p) => s + p.whiteness, 0) / b.length;
     }
     if (hi - lo > 0.25) cut = (lo + hi) / 2; }
-  // type: heights relative to the tallest piece (normally a king)
-  const maxH = Math.max(...pieces.map(p => p.h));
-  for (const p of pieces) {
-    p.color = p.whiteness > cut ? "w" : "b";
-    p.norm = { grid: p.grid, aspect: p.aspect, h: p.h / maxH, sym: p.sym };
-    p.ranked = rank(p.norm, templates);
-    p.type = p.ranked[0].t;
-  }
+  for (const p of pieces) p.color = p.whiteness > cut ? "w" : "b";
 
   // orientation: White's pieces normally sit at the bottom
   const meanRow = col => { const a = pieces.filter(p => p.color === col); return a.length ? a.reduce((s, p) => s + p.r, 0) / a.length : 3.5; };
